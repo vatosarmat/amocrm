@@ -1,0 +1,14 @@
+#!/bin/bash
+
+_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+
+function main {
+  local host="$1"
+  local path="$2"
+
+  while inotifywait -e modify "$_ROOT/"{web,src}/*; do
+    rsync -rC "$_ROOT/"{web,src/get_token,src/webhook,vendor,.env,composer.json,composer.lock} "${host}:${path}"
+  done
+}
+
+main "$@"
