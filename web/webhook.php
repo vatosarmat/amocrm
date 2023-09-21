@@ -27,7 +27,7 @@ function makeApiClient()
     return $apiClient;
 }
 
-function makeCreationNote(array $entityData, Users $usersService, EntityNotes $notesService)
+function makeAddNote(array $entityData, Users $usersService, EntityNotes $notesService)
 {
     $createdAt = isset($entityData['created_at']) ? date('H:i d.m.Y', $entityData['created_at']) : 'пусто';
 
@@ -47,23 +47,52 @@ function makeCreationNote(array $entityData, Users $usersService, EntityNotes $n
     $note = $notesService->addOne($note);
 }
 
+function makeUpdateNote(array $entityData, EntityNotes $notesService)
+{
+    $updatedAt = isset($entityData['updated_at']) ? date('H:i d.m.Y', $entityData['updated_at']) : 'пусто';
+
+    $fields = [];
+    foreach ($entityData['custom_fields'] as $field) {
+        $newValue = implode(', ', array_map(fn ($item) => $item['value'], $field['values']));
+        $fields[] = "{$field['name']}({$field['code']}): $newValue";
+    }
+    $fieldsText = count($fields) > 0 ? implode("\n", $fields) : 'нет';
+
+    $name = $entityData['name'] ?? 'пусто';
+
+    $text = <<<TEXT
+    Название: $name
+    Время изменения: $updatedAt
+    Измененные поля:
+    $fieldsText
+    TEXT;
+
+    $note = new CommonNote();
+    $note->setText($text)->setEntityId($entityData['id']);
+    $note = $notesService->addOne($note);
+}
+
+function runEntityHooks(string $entityName, $apiClient, Users $usersService)
+{
+    if (isset($_POST[$entityName])) {
+        $notesService = $apiClient->notes($entityName);
+        if (isset($_POST[$entityName]['add'])) {
+            foreach ($_POST[$entityName]['add'] as $contactData) {
+                makeAddNote($contactData, $usersService, $notesService);
+            }
+        }
+
+        if (isset($_POST[$entityName]['update'])) {
+            foreach ($_POST[$entityName]['update'] as $contactData) {
+                makeUpdateNote($contactData, $notesService);
+            }
+        }
+    }
+
+}
+
 $apiClient = makeApiClient();
 $usersService = $apiClient->users();
 
-if (isset($_POST['contacts'])) {
-    $notesService = $apiClient->notes(EntityTypesInterface::CONTACTS);
-    if (isset($_POST['contacts']['add'])) {
-        foreach ($_POST['contacts']['add'] as $contactData) {
-            makeCreationNote($contactData, $usersService, $notesService);
-        }
-    }
-}
-
-if (isset($_POST['leads'])) {
-    $notesService = $apiClient->notes(EntityTypesInterface::LEADS);
-    if (isset($_POST['leads']['add'])) {
-        foreach ($_POST['leads']['add'] as $leadData) {
-            makeCreationNote($leadData, $usersService, $notesService);
-        }
-    }
-}
+runEntityHooks(EntityTypesInterface::CONTACTS, $apiClient, $usersService);
+runEntityHooks(EntityTypesInterface::LEADS, $apiClient, $usersService);
