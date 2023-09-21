@@ -5,36 +5,29 @@ use AmoCRM\EntitiesServices\EntityNotes;
 use AmoCRM\EntitiesServices\Users;
 use AmoCRM\Helpers\EntityTypesInterface;
 use AmoCRM\Models\NoteType\CommonNote;
+use App\AmoContactsStore;
+use App\AmoLeadsStore;
 
 require_once dirname(__DIR__).'/src/init.php';
 
 log_all();
 
-function makeApiClient()
+function makeAddNote(array $entityData, Users $usersService, EntityNotes $notesService, App\AmoEntityStore $entityStore)
 {
-    $apiClient = new \AmoCRM\Client\AmoCRMApiClient($_SERVER['AMOCRM_CLIENT_ID'], $_SERVER['AMOCRM_CLIENT_SECRET'],
-        $_SERVER['AMOCRM_REDIRECT_URL']);
-    $apiClient->setAccountBaseDomain($_SERVER['AMOCRM_BASE_DOMAIN']);
+    try {
+        $entityStore->insert($entityData);
+    } catch (\mysqli_sql_exception $e) {
+        log_error($e);
 
-    $accessToken = (new \App\AccessTokenManager($apiClient))->get();
-
-    if (! $accessToken) {
-        exit('Failed to get access token');
+        return;
     }
 
-    $apiClient->setAccessToken($accessToken);
+    $name = $entityData['name'] ?? 'пусто';
 
-    return $apiClient;
-}
-
-function makeAddNote(array $entityData, Users $usersService, EntityNotes $notesService)
-{
     $createdAt = isset($entityData['created_at']) ? date('H:i d.m.Y', $entityData['created_at']) : 'пусто';
 
     $responsible = isset($entityData['responsible_user_id']) ?
         ($usersService->getOne($entityData['responsible_user_id'])->getName() ?? 'пусто')."({$entityData['responsible_user_id']})" : 'пусто';
-
-    $name = $entityData['name'] ?? 'пусто';
 
     $text = <<<TEXT
     Название: $name
@@ -45,25 +38,34 @@ function makeAddNote(array $entityData, Users $usersService, EntityNotes $notesS
     $note = new CommonNote();
     $note->setText($text)->setEntityId($entityData['id']);
     $note = $notesService->addOne($note);
+
 }
 
-function makeUpdateNote(array $entityData, EntityNotes $notesService)
+function makeUpdateNote(array $entityData, EntityNotes $notesService, App\AmoEntityStore $entityStore)
 {
-    $updatedAt = isset($entityData['updated_at']) ? date('H:i d.m.Y', $entityData['updated_at']) : 'пусто';
+    try {
+        $changedFields = $entityStore->update($entityData);
+    } catch (\mysqli_sql_exception $e) {
+        log_error($e);
 
-    $fields = [];
-    foreach ($entityData['custom_fields'] as $field) {
-        $newValue = implode(', ', array_map(fn ($item) => $item['value'], $field['values']));
-        $fields[] = "{$field['name']}({$field['code']}): $newValue";
+        return;
     }
-    $fieldsText = count($fields) > 0 ? implode("\n", $fields) : 'нет';
 
     $name = $entityData['name'] ?? 'пусто';
+
+    $updatedAt = isset($entityData['updated_at']) ? date('H:i d.m.Y', $entityData['updated_at']) : 'пусто';
+
+    //process changed fields
+    $lines = [];
+    foreach ($changedFields as $key => $item) {
+        $newValue = implode(', ', $item['values']);
+        $lines[] = "$item[name]($key): $newValue";
+    }
+    $fieldsText = count($lines) > 0 ? "Измененные поля:\n".implode("\n", $lines) : '';
 
     $text = <<<TEXT
     Название: $name
     Время изменения: $updatedAt
-    Измененные поля:
     $fieldsText
     TEXT;
 
@@ -72,27 +74,37 @@ function makeUpdateNote(array $entityData, EntityNotes $notesService)
     $note = $notesService->addOne($note);
 }
 
-function runEntityHooks(string $entityName, $apiClient, Users $usersService)
+function runEntityHooks(string $entityName, App\AmoEntityStore $entityStore, $apiClient, Users $usersService)
 {
     if (isset($_POST[$entityName])) {
         $notesService = $apiClient->notes($entityName);
         if (isset($_POST[$entityName]['add'])) {
             foreach ($_POST[$entityName]['add'] as $contactData) {
-                makeAddNote($contactData, $usersService, $notesService);
+                makeAddNote($contactData, $usersService, $notesService, $entityStore);
             }
         }
 
         if (isset($_POST[$entityName]['update'])) {
             foreach ($_POST[$entityName]['update'] as $contactData) {
-                makeUpdateNote($contactData, $notesService);
+                makeUpdateNote($contactData, $notesService, $entityStore);
             }
         }
     }
 
 }
 
-$apiClient = makeApiClient();
+$apiClient = new \AmoCRM\Client\AmoCRMApiClient($_SERVER['AMOCRM_CLIENT_ID'], $_SERVER['AMOCRM_CLIENT_SECRET'],
+    $_SERVER['AMOCRM_REDIRECT_URL']);
+$apiClient->setAccountBaseDomain($_SERVER['AMOCRM_BASE_DOMAIN']);
+$accessToken = \App\AccessTokenStore::get();
+if (! $accessToken) {
+    exit('Failed to get access token');
+}
+$apiClient->setAccessToken($accessToken);
+
 $usersService = $apiClient->users();
 
-runEntityHooks(EntityTypesInterface::CONTACTS, $apiClient, $usersService);
-runEntityHooks(EntityTypesInterface::LEADS, $apiClient, $usersService);
+runEntityHooks(EntityTypesInterface::CONTACTS, new AmoContactsStore, $apiClient, $usersService);
+runEntityHooks(EntityTypesInterface::LEADS, new AmoLeadsStore, $apiClient, $usersService);
+
+http_response_code(200);

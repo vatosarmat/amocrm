@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+
+cd "$_ROOT"
+
+function main {
+  local host="$1"
+  local path="$2"
+  local chown="$3"
+
+  while inotifywait -e modify {web,src}/*; do
+    rsync -rRC --chown="$chown:$chown" \
+      {src,vendor,.env} \
+      "web/"{get_token,webhook}".php" \
+      "scripts/"{create_tables.sql,reset_db,setup.php} \
+      "composer."{json,lock} \
+      "${host}:${path}"
+  done
+}
+
+main "$@"
